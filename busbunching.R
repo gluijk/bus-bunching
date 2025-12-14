@@ -7,43 +7,50 @@ library(Cairo)
 
 
 bus_bunching <- function(
-        # headway: elapsed time between two consecutive bus arrivals at the same stop,
-        # regardless of which bus arrives
-        route_type = c("circular", "linear"),  # type of route
-        n_buses = 6,              # number of buses in the simulation
-        n_stops = 20,             # number of stops on the route
-        route_length = 10000,     # total route length in m
-        sim_time = 3*3600,        # total simulation time in s
-        demand_rate = 0.05,       # passenger arrival rate per stop (passengers per second)
-        # NOTE: at first passenger queues at stops are small or empty
-        boarding_rate = 1.0,      # boarding rate (passengers per second)
-        fixed_dwell = 5,          # fixed dwell time at each stop in s
-        base_speed = 12,          # mean speed between stops (m/s)
-        travel_sd = 2,            # standard deviation of travel time between stops in s
-        control = c("none", "schedule", "headway"),  # optional holding control
-        # Holding control policies applied at stops to mitigate bus bunching
-        # Both "headway" and "schedule" operate by adding extra dwell time when a bus arrives "too early"
-        # but differ in what timing reference they try to regulate
-        # "none": fully unstable system, bunching emerges naturally
-        # "headway": stabilizes service spacing locally, minimizes bunching but can cause drifting
-        # "schedule": enforces nominal spacing, but because it still references observed headways it
-        #             behaves like headway control with fixed target rather than true timetable adherence
-        schedule_headway = NULL,  # target headway for schedule holding in s
-        hold_limit = 60,          # maximum holding time when control is applied in s
-        warmup = 0,               # warmup time to discard initial transient (0 = none) in s
-        initial_headway = NULL,   # initial time delay between bus departures in s
-        seed = NULL               # random seed for reproducibility
 
+    # Route definition:
+    route_type = c("circular", "linear"),  # type of route
+    route_length = 10000,     # total route length in m
+    n_stops = 20,             # number of stops on the route
+    n_buses = 6,              # number of buses in the simulation
+    fixed_dwell = 5,          # fixed dwell time at each stop in s
+    initial_headway = NULL,   # initial time delay between bus departures in s
+    # headway: elapsed time between two consecutive bus arrivals at the same stop,
+    # regardless of which bus arrives
+    base_speed = 12,          # mean speed between stops in m/s
+    travel_sd = 2,            # standard deviation of travel time between stops in s
+    
+    # Demand definition:
+    # NOTE: at first passenger queues at stops are small or empty -> first bus rides fast
+    demand_rate = 0.05,       # passenger arrival rate per stop in passengers/second
+    boarding_rate = 1.0,      # boarding rate in passengers/second
+    
+    # Holding control:
+    control = c("none", "schedule", "headway"),
+    # Policies applied at stops to mitigate bus bunching. Both "headway" and "schedule"
+    # operate by adding extra dwell time when a bus arrives "too early"
+    # but differ in what timing reference they try to regulate
+    # "none": fully unstable system, bunching emerges naturally
+    # "headway": stabilizes service spacing locally, minimizes bunching but can cause drifting
+    # "schedule": enforces nominal spacing, but because it still references observed headways it
+    #             behaves like headway control with fixed target rather than true timetable adherence
+    schedule_headway = NULL,  # target headway for schedule holding in s
+    hold_limit = 60,          # maximum holding time when control is applied in s
+    
+    # Simulation parameters:
+    warmup = 0,               # warmup time to discard initial transient (0=none) in s
+    sim_time = 3*3600,        # total simulation time in s
+    seed = 123                # random seed for reproducibility
+    
 ) {
+    # Optional parameters: match.arg() automatically picks the first element of the vector as default
+    route_type <- match.arg(route_type)  # 'circular' by default
+    control <- match.arg(control)  # 'none' by default
     if (control == "schedule" && is.null(schedule_headway)) {
         message("ERROR: schedule_headway must be provided when control = 'schedule'")
         return(NULL)
     }
-    
     if (!is.null(seed)) set.seed(seed)
-    # match.arg() automatically picks the first element of the vector as the default:
-    route_type <- match.arg(route_type)  # 'circular' by default
-    control <- match.arg(control)  # 'none' by default
     
     # Uniform spacing assumption: only place where spatial structure enters the simulation
     seg_count <- n_stops  # number of travel segments
@@ -52,12 +59,11 @@ bus_bunching <- function(
     
     # Set default initial headway if not provided
     if (is.null(initial_headway)) {
-        if (route_type == "circular") {
-            loop_time_mean <- (baseline_travel_time + fixed_dwell) * seg_count
-            initial_headway <- loop_time_mean / n_buses
-        } else {
-            initial_headway <- 0
-        }
+        loop_time_mean <- (baseline_travel_time + fixed_dwell) * seg_count
+        initial_headway <- loop_time_mean / n_buses
+        # This would be the exact initial_headway with no passengers (demand_rate=0) to
+        # make the last bus depart when the first bus is about to finish the route
+        # In a real application with passengers the ideal initial_headway should be set higher
     }
     
     # Initialize buses
@@ -96,7 +102,7 @@ bus_bunching <- function(
         
         delta_t <- t_now - last_visit_time[stop_id]
         if (delta_t < 0) delta_t <- 0
-        new_arrivals <- rpois(1, demand_rate * delta_t)
+        new_arrivals <- rpois(1, demand_rate * delta_t)  # Poisson arrivals
         waiting_passengers[stop_id] <- waiting_passengers[stop_id] + new_arrivals
         last_visit_time[stop_id] <- t_now
         
@@ -109,7 +115,7 @@ bus_bunching <- function(
             prev_idx <- which(sapply(events, function(x) x$stop) == stop_id)
             if (length(prev_idx) > 0) {
                 last_arrival_time <- events[[tail(prev_idx, 1)]]$arrival
-                headway_obs <- t_now - last_arrival_time
+                headway_obs <- t_now - last_arrival_time  # headway observed from last departed bus
                 
                 desired_headway = if (control == "schedule") schedule_headway else initial_headway
                 hold_needed <- desired_headway - headway_obs
@@ -198,20 +204,43 @@ bus_bunching <- function(
         # Together they are the most informative pair
         
         metrics <- list(
-            mean_headway = mean_headway,
-            cv_headway = cv_headway,
-            mean_waiting_est = mean_waiting_est,
-            percent_bunched = percent_bunched,
-            n_events = nrow(events_df)  # total number of bus arrivals recorded after warm up filtering
             # For stable statistics it is desirable that n_events >> n_stops × n_buses
+            n_events = nrow(events_df),  # total number of bus arrivals recorded after warm up filtering
+            mean_headway = mean_headway,
+            mean_waiting_est = mean_waiting_est,  # half of mean_headway
+            cv_headway = cv_headway,
+            percent_bunched = percent_bunched
         )
     }
+    
+    
+    # Record input parameters actually used by the simulation
+    params <- list(
+        route_type = route_type,
+        route_length = route_length,
+        n_stops = n_stops,
+        n_buses = n_buses,
+        fixed_dwell = fixed_dwell,
+        initial_headway = initial_headway,
+        base_speed = base_speed,
+        travel_sd = travel_sd,
+        demand_rate = demand_rate,
+        boarding_rate = boarding_rate,
+        control = control,
+        schedule_headway = schedule_headway,
+        hold_limit = hold_limit,
+        warmup = warmup,
+        sim_time = sim_time,
+        seed = seed
+    )
+    
     
     # Output data
     list(
         events = events_df,  # dataframe
         headways = headways_df,  # datafame
-        metrics = metrics  # simulation performance parameters
+        metrics = metrics,  # simulation performance parameters
+        params = params  # input parameters actually used
     )
 }
 
@@ -248,14 +277,19 @@ for (control in c("none", "headway", "schedule")) {
         seed = 1000
     )
     
-    # res$metrics
-    # head(res$events)
+
+    res=bus_bunching(n_buses = 10, initial_headway = 60, demand_rate = 0.02)
+    res=bus_bunching(n_buses = 10, initial_headway = 60*1.5, demand_rate = 0.02, control='headway')
+    res$metrics
+    res$params
+    head(res$events)
     
     
     # PNG output with antialiasing
     # Plot bus trajectories (arrival time vs stop index)
-    CairoPNG(paste0("busbunching_", control, ".png"), width = 1920/2, height = 400)
+    CairoPNG(paste0("busbunchingORG_", params$control, ".png"), width = 1920, height = 1080/2)
         ev <- res$events
+        params <- res$params
         p=ggplot(ev, aes(x = arrival/3600, y = stop, group = bus, color = factor(bus))) +
             geom_line(linewidth = 0.8) +
             geom_point(size = 1.2) +
@@ -263,11 +297,12 @@ for (control in c("none", "headway", "schedule")) {
                 x = "Time (hours)",
                 y = "Bus stop",
                 color = "Bus",
-                title = paste0("Bus trajectories with control='", control, "' ",
-                               ifelse(control == 'schedule', paste0("(schedule_headway=", round(schedule_headway/60,1), "min) "), ""),
-                               "(initial_headway=", round(initial_headway/60,1),"min, route_length=", route_length,
-                               "m, demand_rate=", demand_rate, "pax/s, boarding_rate=",
-                               boarding_rate, "pax/s)")
+                title = paste0("Bus trajectories with control='", params$control, "' ",
+                               ifelse(params$control == 'schedule', paste0("[schedule_headway=",
+                               round(params$schedule_headway/60,1), "min] "), ""),
+                               "(initial_headway=", round(params$initial_headway/60,1),"min, route_length=",
+                               params$route_length, "m, demand_rate=", params$demand_rate, "pax/s, boarding_rate=",
+                               params$boarding_rate, "pax/s)")
             ) +
             theme_minimal(base_size = 22) +
             theme(
@@ -298,7 +333,7 @@ ggplot(hw, aes(x = arrival/3600, y = headway/60)) +  # global aesthetics
     geom_smooth(se = FALSE) +  # linear regresion (~headway average)
     labs(x = "Time (hours)", y = "Headway (minutes)",
          title = "Headways at stops over time") +
-    scale_y_continuous(limits = c(0, 30)) +  # set y-axis maximum to 30
+    # scale_y_continuous(limits = c(0, 30)) +  # set y-axis maximum to 30
     theme_minimal()
 dev.off()
 
