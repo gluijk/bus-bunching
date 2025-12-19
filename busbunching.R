@@ -1,4 +1,4 @@
-# Bus bunching simulator
+# Basic bus bunching discrete event simulation
 # www.overfitting.net
 # https://www.overfitting.net/
 
@@ -6,6 +6,9 @@ library(ggplot2)
 library(Cairo)
 
 
+# Discrete Event Simulation (DES) for Bus bunching
+# Modeling approach in which the system state changes only at a discrete set of time points called events
+# DES models are: order sensitive, causality driven, state based
 bus_bunching <- function(
 
     # Route definition:
@@ -18,7 +21,7 @@ bus_bunching <- function(
     # headway: elapsed time between two consecutive bus arrivals at the same stop,
     # regardless of which bus arrives
     base_speed = 12,          # mean speed between stops in m/s
-    travel_sd = 2,            # standard deviation of travel time between stops in s
+    travel_sd_fraction = 0.2, # sd of travel time between stops as a fraction of baseline_travel_time
     
     # Demand definition:
     # NOTE: at first passenger queues at stops are small or empty -> first bus rides fast
@@ -55,7 +58,9 @@ bus_bunching <- function(
     # Uniform spacing assumption: only place where spatial structure enters the simulation
     seg_count <- n_stops  # number of travel segments
     seg_length <- route_length / seg_count  # distance between consecutive stops
-    baseline_travel_time <- seg_length / base_speed  # mean travel time between stops 
+    baseline_travel_time <- seg_length / base_speed  # mean travel time between stops
+    min_travel_time <- 0.01 * baseline_travel_time  # min travel_time to preserve event ordering (1% of baseline)
+    travel_time_sd <- travel_sd_fraction * baseline_travel_time  # convert fractional SD to s
     
     # Set default initial headway if not provided
     if (is.null(initial_headway)) {
@@ -124,8 +129,7 @@ bus_bunching <- function(
         }
         
         # Travel implementation
-        travel_time <- rnorm(1, baseline_travel_time, travel_sd)
-        if (!is.finite(travel_time) || travel_time < 0.2)  travel_time <- baseline_travel_time
+        travel_time <- max(min_travel_time, rnorm(1, baseline_travel_time, travel_time_sd))
         record_event(bus_id, stop_id, t_now, new_arrivals, boarded, dwell_time, travel_time)
         next_stop <- stop_id + 1
         
@@ -223,7 +227,8 @@ bus_bunching <- function(
         fixed_dwell = fixed_dwell,
         initial_headway = initial_headway,
         base_speed = base_speed,
-        travel_sd = travel_sd,
+        travel_sd_fraction = travel_sd_fraction,  # fractional SD input
+        travel_time_sd = travel_time_sd,  # actual SD used in s
         demand_rate = demand_rate,
         boarding_rate = boarding_rate,
         control = control,
@@ -247,7 +252,7 @@ bus_bunching <- function(
 
 
 ################################################
-# SIMULATION
+# INITIAL SIMULATIONS
 
 # Minimal run (no control):
 route_length=12000
@@ -353,3 +358,63 @@ png("busbunchingpepe.png", width=1920, height=1080)
 dev.off()
 
 
+################################################
+# SIMULATIONS
+
+# 1. FIRST EXAMPLES
+demand_rate <- c(0.00, 0.01, 0.05, 0.05)
+control <- c("none", "none", "none", "headway")
+hold_limit <- c(NA, NA, NA, 60*2)
+
+for (i in 1:4) {
+    res <- bus_bunching(
+        n_buses = 3, n_stops = 8,
+        route_length = 15000,
+        demand_rate = demand_rate[i],
+        initial_headway = 60 * 15,
+        base_speed = 5,
+        sim_time = 4 * 3600,
+        control = control[i],
+        hold_limit = hold_limit[i]
+    )
+    
+    res$metrics
+    res$params
+    ev <- res$events
+    params <- res$params
+    
+    # PNG output with antialiasing
+    # Plot bus trajectories (arrival time vs stop index)
+    for (f in c(1,3)) {
+        CairoPNG(paste0(paste0("busbunching", f, "_sim", i, ".png")), width = 512*f, height = 220*f)
+        p=ggplot(ev, aes(x = arrival/3600, y = stop, group = bus, color = factor(bus))) +
+            geom_line(linewidth = 0.8*f) +
+            geom_point(size = 1.8*f) +
+            labs(
+                x = "Time (hours)",
+                y = "Bus stop",
+                color = "Bus",
+                title = paste0("Bus trajectories with control='", params$control, "' ",
+                   ifelse(params$control == 'schedule', paste0("[ schedule_headway=",
+                   round(params$schedule_headway/60,1), "min ] "), ""),
+                   "\n[ initial_headway=", round(params$initial_headway/60,1),"min / route_length=",
+                   params$route_length, "m ]\n[ demand_rate=", params$demand_rate*60, "pax/min / boarding_rate=",
+                   params$boarding_rate, "pax/s ]")
+            ) +
+            theme_minimal(base_size = 22) +
+            theme(
+                legend.title = element_text(size = 12*f),
+                legend.text  = element_text(size = 12*f),
+                axis.title   = element_text(size = 12*f),
+                axis.text    = element_text(size = 12*f),
+                panel.grid.minor = element_blank(),
+                panel.grid.major = element_line(linewidth = 0.6),
+                axis.line = element_line(linewidth = 1),
+                legend.key.size = unit(1.5, "lines"),
+                plot.title = element_text(size = 12*f)  # reduce title size here
+            )
+        
+        print(p)
+        dev.off()
+    }
+}
