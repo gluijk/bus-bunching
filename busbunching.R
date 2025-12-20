@@ -346,7 +346,7 @@ dev.off()
 
 ################################################
 
-# 2. MISC
+# 3. MISC
 
 # Minimal run (no control):
 route_length=12000
