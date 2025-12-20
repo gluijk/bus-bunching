@@ -1,4 +1,4 @@
 # bus-bunching
-Bus bunching simulator
+Basic bus bunching discrete event simulation
 
 ![bus-bunching](/basicbusbunching.gif)
