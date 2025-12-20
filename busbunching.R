@@ -1,6 +1,6 @@
 # Basic bus bunching discrete event simulation
 # www.overfitting.net
-# https://www.overfitting.net/
+# https://www.overfitting.net/2025/12/simulador-de-bus-bunching-con-r.html
 
 library(ggplot2)
 library(Cairo)
@@ -250,118 +250,10 @@ bus_bunching <- function(
 }
 
 
-
 ################################################
-# INITIAL SIMULATIONS
 
-# Minimal run (no control):
-route_length=12000
-demand_rate=0.02
-boarding_rate=0.5  # 1.0
-initial_headway = 60*8
-schedule_headway = initial_headway*2
-warmup=0
+# 1. BASIC EXAMPLE: 3 BUSES LINE WITH DIFFERENT DEMAND AND CONTROL
 
-control="none"
-control="headway"
-
-for (control in c("none", "headway", "schedule")) {
-    res <- bus_bunching(
-        n_buses = 4, n_stops = 20,
-        route_length = route_length,
-        sim_time = 4 * 3600,
-        demand_rate = demand_rate,
-        boarding_rate = boarding_rate,  # NOTE: at first passenger queues at stops are small or empty
-        base_speed = 10,
-        travel_sd = 3,
-        control = control,
-        schedule_headway = schedule_headway, hold_limit = 60,
-        route_type = "circular",
-        initial_headway = initial_headway,
-        warmup = warmup,
-        seed = 1000
-    )
-    
-
-    res=bus_bunching(n_buses = 10, initial_headway = 60, demand_rate = 0.02)
-    res=bus_bunching(n_buses = 10, initial_headway = 60*1.5, demand_rate = 0.02, control='headway')
-    res$metrics
-    res$params
-    head(res$events)
-    
-    
-    # PNG output with antialiasing
-    # Plot bus trajectories (arrival time vs stop index)
-    CairoPNG(paste0("busbunchingORG_", params$control, ".png"), width = 1920, height = 1080/2)
-        ev <- res$events
-        params <- res$params
-        p=ggplot(ev, aes(x = arrival/3600, y = stop, group = bus, color = factor(bus))) +
-            geom_line(linewidth = 0.8) +
-            geom_point(size = 1.2) +
-            labs(
-                x = "Time (hours)",
-                y = "Bus stop",
-                color = "Bus",
-                title = paste0("Bus trajectories with control='", params$control, "' ",
-                               ifelse(params$control == 'schedule', paste0("[schedule_headway=",
-                               round(params$schedule_headway/60,1), "min] "), ""),
-                               "(initial_headway=", round(params$initial_headway/60,1),"min, route_length=",
-                               params$route_length, "m, demand_rate=", params$demand_rate, "pax/s, boarding_rate=",
-                               params$boarding_rate, "pax/s)")
-            ) +
-            theme_minimal(base_size = 22) +
-            theme(
-                legend.title = element_text(size = 20),
-                legend.text  = element_text(size = 20),
-                axis.title   = element_text(size = 20),
-                axis.text    = element_text(size = 20),
-                panel.grid.minor = element_blank(),
-                panel.grid.major = element_line(linewidth = 0.6),
-                axis.line = element_line(linewidth = 1),
-                legend.key.size = unit(1.5, "lines"),
-                plot.title = element_text(size = 14)  # reduce title size here
-            )
-        
-    print(p)
-    dev.off()
-}
-
-
-################################################
-# PLOTTING
-
-# Plotting headways over time
-hw <- res$headways
-png("busbunchingnone_headways.png", width=960, height=400)
-ggplot(hw, aes(x = arrival/3600, y = headway/60)) +  # global aesthetics
-    geom_point(alpha = 0.6) +
-    geom_smooth(se = FALSE) +  # linear regresion (~headway average)
-    labs(x = "Time (hours)", y = "Headway (minutes)",
-         title = "Headways at stops over time") +
-    # scale_y_continuous(limits = c(0, 30)) +  # set y-axis maximum to 30
-    theme_minimal()
-dev.off()
-
-# Headway distribution
-png("busbunchingnone_hist.png", width=960, height=280)
-hist(hw$headway/60, breaks=150, xlab='Headway (minutes)', xlim=c(0,30), main='Headway distribution')
-abline(v=c(mean(hw$headway/60), median(hw$headway/60)), lty='dotted', col='red')
-dev.off()
-
-# Plot bus trajectories (arrival time vs stop index)
-png("busbunchingpepe.png", width=1920, height=1080)
-    ev <- res$events
-    ggplot(ev, aes(x = arrival/3600, y = stop, group = bus, color = factor(bus))) +
-        geom_line() + geom_point(size = 0.6) +
-        labs(x = "Time (hours)", y = "Stop index", color = "Bus") +
-        theme_minimal()
-dev.off()
-
-
-################################################
-# SIMULATIONS
-
-# 1. FIRST EXAMPLES
 demand_rate <- c(0.00, 0.01, 0.05, 0.05)
 control <- c("none", "none", "none", "headway")
 hold_limit <- c(NA, NA, NA, 60*2)
@@ -418,3 +310,113 @@ for (i in 1:4) {
         dev.off()
     }
 }
+
+
+################################################
+
+# 2. DENSE EXAMPLE WITH DIFFERENT METRICS PLOTTING (HEADWAYS, HISTOGRAM, TRAJECTORIES)
+
+# Plotting headways over time
+hw <- res$headways
+png("busbunchingnone_headways.png", width=960, height=400)
+ggplot(hw, aes(x = arrival/3600, y = headway/60)) +  # global aesthetics
+    geom_point(alpha = 0.6) +
+    geom_smooth(se = FALSE) +  # linear regresion (~headway average)
+    labs(x = "Time (hours)", y = "Headway (minutes)",
+         title = "Headways at stops over time") +
+    # scale_y_continuous(limits = c(0, 30)) +  # set y-axis maximum to 30
+    theme_minimal()
+dev.off()
+
+# Headway distribution
+png("busbunchingnone_hist.png", width=960, height=280)
+hist(hw$headway/60, breaks=150, xlab='Headway (minutes)', xlim=c(0,30), main='Headway distribution')
+abline(v=c(mean(hw$headway/60), median(hw$headway/60)), lty='dotted', col='red')
+dev.off()
+
+# Plot bus trajectories (arrival time vs stop index)
+png("busbunchingpepe.png", width=1920, height=1080)
+ev <- res$events
+ggplot(ev, aes(x = arrival/3600, y = stop, group = bus, color = factor(bus))) +
+    geom_line() + geom_point(size = 0.6) +
+    labs(x = "Time (hours)", y = "Stop index", color = "Bus") +
+    theme_minimal()
+dev.off()
+
+
+################################################
+
+# 2. MISC
+
+# Minimal run (no control):
+route_length=12000
+demand_rate=0.02
+boarding_rate=0.5  # 1.0
+initial_headway = 60*8
+schedule_headway = initial_headway*2
+warmup=0
+
+control="none"
+control="headway"
+
+for (control in c("none", "headway", "schedule")) {
+    res <- bus_bunching(
+        n_buses = 4, n_stops = 20,
+        route_length = route_length,
+        sim_time = 4 * 3600,
+        demand_rate = demand_rate,
+        boarding_rate = boarding_rate,  # NOTE: at first passenger queues at stops are small or empty
+        base_speed = 10,
+        travel_sd = 3,
+        control = control,
+        schedule_headway = schedule_headway, hold_limit = 60,
+        route_type = "circular",
+        initial_headway = initial_headway,
+        warmup = warmup,
+        seed = 1000
+    )
+    
+    
+    res=bus_bunching(n_buses = 10, initial_headway = 60, demand_rate = 0.02)
+    res=bus_bunching(n_buses = 10, initial_headway = 60*1.5, demand_rate = 0.02, control='headway')
+    res$metrics
+    res$params
+    head(res$events)
+    
+    
+    # PNG output with antialiasing
+    # Plot bus trajectories (arrival time vs stop index)
+    CairoPNG(paste0("busbunchingORG_", params$control, ".png"), width = 1920, height = 1080/2)
+    ev <- res$events
+    params <- res$params
+    p=ggplot(ev, aes(x = arrival/3600, y = stop, group = bus, color = factor(bus))) +
+        geom_line(linewidth = 0.8) +
+        geom_point(size = 1.2) +
+        labs(
+            x = "Time (hours)",
+            y = "Bus stop",
+            color = "Bus",
+            title = paste0("Bus trajectories with control='", params$control, "' ",
+                           ifelse(params$control == 'schedule', paste0("[schedule_headway=",
+                                                                       round(params$schedule_headway/60,1), "min] "), ""),
+                           "(initial_headway=", round(params$initial_headway/60,1),"min, route_length=",
+                           params$route_length, "m, demand_rate=", params$demand_rate, "pax/s, boarding_rate=",
+                           params$boarding_rate, "pax/s)")
+        ) +
+        theme_minimal(base_size = 22) +
+        theme(
+            legend.title = element_text(size = 20),
+            legend.text  = element_text(size = 20),
+            axis.title   = element_text(size = 20),
+            axis.text    = element_text(size = 20),
+            panel.grid.minor = element_blank(),
+            panel.grid.major = element_line(linewidth = 0.6),
+            axis.line = element_line(linewidth = 1),
+            legend.key.size = unit(1.5, "lines"),
+            plot.title = element_text(size = 14)  # reduce title size here
+        )
+    
+    print(p)
+    dev.off()
+}
+
